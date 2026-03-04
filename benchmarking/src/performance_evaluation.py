@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1358,6 +1359,7 @@ class RealWorkLoadPerformanceEvaluator(SyntheticPerformanceEvaluator):
         llm_responses: List[LLMResponse] = []
         progress: List[Any] = []
 
+        start_timestamp = datetime.now(timezone.utc).isoformat()
         start_time = time.monotonic()
         # Use ThreadPoolExecutor to handle threads
         with ThreadPoolExecutor(max_workers=10000) as executor:
@@ -1429,6 +1431,7 @@ class RealWorkLoadPerformanceEvaluator(SyntheticPerformanceEvaluator):
 
         # Capture end time and notify user
         end_time = time.monotonic()
+        end_timestamp = datetime.now(timezone.utc).isoformat()
         logger.info('Tasks Executed!')
         logger.info(f'Benchmarking results obtained for model {self.model_name} queried with the {self.llm_api} API.')
 
@@ -1448,6 +1451,8 @@ class RealWorkLoadPerformanceEvaluator(SyntheticPerformanceEvaluator):
             'num_input_tokens': num_input_tokens,
             'num_output_tokens': num_output_tokens,
             'additional_sampling_params': sampling_params,
+            'start_timestamp': start_timestamp,
+            'end_timestamp': end_timestamp,
         }
 
         return metadata, llm_responses
