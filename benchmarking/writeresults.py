@@ -97,6 +97,8 @@ def main():
 
     # Metrics to record (columns)
     selected_metrics = [
+        "start_timestamp",
+        "end_timestamp",
         "results_client_ttft_s_mean",
         "results_client_end_to_end_latency_s_mean",
         "results_client_output_token_per_s_per_request_mean",

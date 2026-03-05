@@ -7,7 +7,7 @@ ulimit -n 4096
 
 # --- configuration -----------------------------------------------------------
 
-MODEL_NAME="MiniMax-M2.5"
+MODEL_NAME="gpt-oss-120b"
 RESULTS_DIR="./data/results/llmperf"
 QPS="${QPS:-1}"                    # Allow overriding via env var: QPS=10 ./run_real_workload_dataset.sh
 QPS_DISTRIBUTION="constant"
@@ -15,7 +15,7 @@ TIMEOUT=600
 NUM_INPUT_TOKENS=1000
 NUM_OUTPUT_TOKENS=1000
 MULTIMODAL_IMAGE_SIZE="na"
-NUM_REQUESTS=16
+NUM_REQUESTS=128
 DEBUG_MODE="False"
 LLM_API="sncloud"
 
