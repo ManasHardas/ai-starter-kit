@@ -106,7 +106,8 @@ echo "results-dir: $RESULTS_DIR"
 rc=0
 for qps in "${qps_list[@]}"; do
   # Set num-requests to 3x current QPS
-  num_requests=$((2 * qps))
+  # num_requests=$((2 * qps))
+  num_requests=128
   for nin in "${num_in_list[@]}"; do
     for nout in "${num_out_list[@]}"; do
       echo "==> Running combo: qps=$qps, num_requests=$num_requests, num_input_tokens=$nin, num_output_tokens=$nout"
