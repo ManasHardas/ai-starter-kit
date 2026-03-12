@@ -23,10 +23,7 @@ dry_run=0
 
 # Fixed args (edit if you need different defaults)
 MODE="real_workload"
-# MODEL_NAME="Meta-Llama-3.1-405B"
 MODEL_NAME="DeepSeek-V3.1"
-# MODEL_NAME="Meta-Llama-3.3-70B-Instruct"
-# MODEL_NAME="DeepSeek-V3-0324"
 # Results dir: base path + model name + timestamp so files don't overwrite across runs
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 MODEL_SAFE="${MODEL_NAME//[^a-zA-Z0-9.-]/_}"
@@ -36,6 +33,14 @@ TIMEOUT="600"
 MULTI_SIZE="na"
 DEBUG_MODE="False"
 LLM_API="sncloud"
+
+# Endurance testing parameters (defaults)
+ENABLE_ENDURANCE_MODE="False"
+TEST_DURATION_HOURS="12.0"
+CHECKPOINT_INTERVAL_SECONDS="300"
+CHECKPOINT_INTERVAL_REQUESTS="1000"
+ENABLE_RESUME="True"
+CHECKPOINT_DIR=""
 
 EXTRA_ARGS=()
 
@@ -82,6 +87,36 @@ while [[ $# -gt 0 ]]; do
       dry_run=1
       shift
       ;;
+    --enable-endurance-mode)
+      [[ $# -ge 2 ]] || { echo "Error: --enable-endurance-mode needs a value"; exit 1; }
+      ENABLE_ENDURANCE_MODE="$2"
+      shift 2
+      ;;
+    --test-duration-hours)
+      [[ $# -ge 2 ]] || { echo "Error: --test-duration-hours needs a value"; exit 1; }
+      TEST_DURATION_HOURS="$2"
+      shift 2
+      ;;
+    --checkpoint-interval-seconds)
+      [[ $# -ge 2 ]] || { echo "Error: --checkpoint-interval-seconds needs a value"; exit 1; }
+      CHECKPOINT_INTERVAL_SECONDS="$2"
+      shift 2
+      ;;
+    --checkpoint-interval-requests)
+      [[ $# -ge 2 ]] || { echo "Error: --checkpoint-interval-requests needs a value"; exit 1; }
+      CHECKPOINT_INTERVAL_REQUESTS="$2"
+      shift 2
+      ;;
+    --enable-resume)
+      [[ $# -ge 2 ]] || { echo "Error: --enable-resume needs a value"; exit 1; }
+      ENABLE_RESUME="$2"
+      shift 2
+      ;;
+    --checkpoint-dir)
+      [[ $# -ge 2 ]] || { echo "Error: --checkpoint-dir needs a value"; exit 1; }
+      CHECKPOINT_DIR="$2"
+      shift 2
+      ;;
     --) # pass-through to evaluator.py
       shift
       EXTRA_ARGS+=("$@")
@@ -125,7 +160,17 @@ for qps in "${qps_list[@]}"; do
         --num-requests "$num_requests"
         --use-debugging-mode "$DEBUG_MODE"
         --llm-api "$LLM_API"
+        --enable-endurance-mode "$ENABLE_ENDURANCE_MODE"
+        --test-duration-hours "$TEST_DURATION_HOURS"
+        --checkpoint-interval-seconds "$CHECKPOINT_INTERVAL_SECONDS"
+        --checkpoint-interval-requests "$CHECKPOINT_INTERVAL_REQUESTS"
+        --enable-resume "$ENABLE_RESUME"
       )
+
+      # Add checkpoint-dir if specified
+      if [[ -n "$CHECKPOINT_DIR" ]]; then
+        cmd+=(--checkpoint-dir "$CHECKPOINT_DIR")
+      fi
 
       # pass-through extras last (if any)
       if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then

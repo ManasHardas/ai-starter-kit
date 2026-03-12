@@ -1523,3 +1523,547 @@ class RealWorkLoadPerformanceEvaluator(SyntheticPerformanceEvaluator):
             request_configs.append(request_config)
 
         return request_configs
+
+
+class EndurancePerformanceEvaluator(RealWorkLoadPerformanceEvaluator):
+    """
+    Extended evaluator for long-running endurance tests (6-12+ hours).
+
+    Features:
+    - Duration-based testing instead of request-count based
+    - Incremental result writing to JSONL
+    - Periodic checkpointing with rolling statistics
+    - Automatic resume capability from checkpoints
+    - Bounded memory usage through result streaming
+    """
+
+    def __init__(
+        self,
+        test_duration_hours: float,
+        checkpoint_interval_seconds: int = 300,
+        checkpoint_interval_requests: int = 1000,
+        enable_resume: bool = True,
+        checkpoint_dir: Optional[str] = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Initialize endurance evaluator.
+
+        Args:
+            test_duration_hours: Duration to run the test in hours.
+            checkpoint_interval_seconds: Minimum seconds between checkpoints.
+            checkpoint_interval_requests: Minimum requests between checkpoints.
+            enable_resume: Whether to auto-resume from checkpoint if found.
+            checkpoint_dir: Custom checkpoint directory (defaults to results_dir).
+        """
+        super().__init__(*args, **kwargs)
+
+        # Import checkpoint infrastructure
+        from benchmarking.src.checkpoint_manager import (
+            CheckpointManager,
+            CheckpointState,
+            RollingStatsCalculator,
+        )
+
+        self.CheckpointState = CheckpointState
+        self.test_duration_hours = test_duration_hours
+        self.checkpoint_interval_seconds = checkpoint_interval_seconds
+        self.checkpoint_interval_requests = checkpoint_interval_requests
+        self.enable_resume = enable_resume
+
+        # Setup checkpoint directory
+        if checkpoint_dir is None:
+            checkpoint_dir = self.results_dir
+
+        # Initialize checkpoint manager
+        self.checkpoint_manager = CheckpointManager(checkpoint_dir, str(self.run_uuid))
+
+        # Rolling statistics calculator
+        self.rolling_stats = RollingStatsCalculator(reservoir_size=10000)
+
+        # State tracking
+        self.total_requests_completed = 0
+        self.total_requests_started = 0
+        self.last_checkpoint_time = 0.0
+        self.requests_since_checkpoint = 0
+        self.test_start_time = 0.0
+        self.test_start_timestamp = ''
+
+        # JSONL file handle for incremental writes
+        self.jsonl_file_handle: Optional[Any] = None
+        self.jsonl_lock = threading.Lock()
+
+        # Buffer for responses between checkpoints (bounded size)
+        self.response_buffer: List[LLMResponse] = []
+        self.buffer_lock = threading.Lock()
+
+    def create_output_filename(self, num_input_tokens: int, num_output_tokens: int) -> str:
+        """Create filename for endurance test."""
+        generation_mode = 'stream' if self.is_stream_mode else ''
+        multimodal_suffix = f'_multimodal_{self.multimodal_image_size}' if self.multimodal_image_size != 'na' else ''
+        model_name = self.model_name.replace('_', '-')
+
+        output_file_name = (
+            f'endurance_{self.user_metadata["model_idx"]}_{model_name}{multimodal_suffix}_{num_input_tokens}'
+            f'_{num_output_tokens}_{self.qps}_{self.qps_distribution}_{self.test_duration_hours}h_{generation_mode}_{self.run_uuid}'
+        )
+
+        return self.sanitize_file_prefix(output_file_name)
+
+    def _open_jsonl_file(self, filename: str, mode: str = 'w') -> None:
+        """Open JSONL file for incremental writes."""
+        results_dir = Path(self.results_dir)
+        results_dir.mkdir(parents=True, exist_ok=True)
+
+        jsonl_path = results_dir / f'{filename}_individual_responses.jsonl'
+        self.individual_responses_file_path = str(jsonl_path)
+        self.jsonl_file_handle = open(jsonl_path, mode, buffering=1)  # Line buffered
+
+    def _write_response_to_jsonl(self, response: LLMResponse) -> None:
+        """Write a single response to JSONL file (thread-safe)."""
+        if self.jsonl_file_handle is None:
+            return
+
+        with self.jsonl_lock:
+            json.dump(response.metrics, self.jsonl_file_handle)
+            self.jsonl_file_handle.write('\n')
+            self.jsonl_file_handle.flush()
+
+    def _update_rolling_stats(self, response: LLMResponse) -> None:
+        """Update rolling statistics with response metrics."""
+        metrics = response.metrics
+
+        # Skip errored requests
+        if not pd.isnull(metrics.get(common_metrics.ERROR_CODE)):
+            return
+
+        # Update each metric
+        metric_names = [
+            common_metrics.TTFT,
+            common_metrics.E2E_LAT,
+            common_metrics.REQ_OUTPUT_THROUGHPUT,
+            common_metrics.NUM_INPUT_TOKENS,
+            common_metrics.NUM_OUTPUT_TOKENS,
+        ]
+
+        for metric_name in metric_names:
+            value = metrics.get(metric_name)
+            if value is not None and not pd.isnull(value):
+                self.rolling_stats.update(metric_name, float(value))
+
+    def _should_checkpoint(self, current_time: float) -> bool:
+        """Determine if it's time to create a checkpoint."""
+        time_condition = (current_time - self.last_checkpoint_time) >= self.checkpoint_interval_seconds
+        count_condition = self.requests_since_checkpoint >= self.checkpoint_interval_requests
+        return time_condition or count_condition
+
+    def _save_checkpoint(self, current_time: float, current_timestamp: str) -> None:
+        """Save current state to checkpoint."""
+        logger.info(f'Saving checkpoint... (requests: {self.total_requests_completed})')
+
+        checkpoint_state = self.CheckpointState(
+            run_uuid=str(self.run_uuid),
+            start_time=self.test_start_time,
+            start_timestamp=self.test_start_timestamp,
+            last_checkpoint_time=current_time,
+            total_requests_completed=self.total_requests_completed,
+            total_requests_started=self.total_requests_started,
+            test_duration_hours=self.test_duration_hours,
+            qps=self.qps,
+            qps_distribution=self.qps_distribution,
+            num_input_tokens=0,  # Will be set by caller
+            num_output_tokens=0,  # Will be set by caller
+            model_name=self.model_name,
+            rolling_stats_state=self.rolling_stats.to_dict(),
+            completed=False,
+        )
+
+        self.checkpoint_manager.save_checkpoint(checkpoint_state)
+        self.last_checkpoint_time = current_time
+        self.requests_since_checkpoint = 0
+
+        # Write intermediate summary
+        self._write_intermediate_summary()
+
+        logger.info(f'Checkpoint saved at {current_timestamp}')
+
+    def _write_intermediate_summary(self) -> None:
+        """Write intermediate summary with current rolling statistics."""
+        results_dir = Path(self.results_dir)
+        summary_path = results_dir / f'intermediate_summary_{self.run_uuid}.json'
+
+        summary = {
+            'run_uuid': str(self.run_uuid),
+            'model': self.model_name,
+            'test_duration_hours': self.test_duration_hours,
+            'qps': self.qps,
+            'qps_distribution': self.qps_distribution,
+            'total_requests_completed': self.total_requests_completed,
+            'total_requests_started': self.total_requests_started,
+            'elapsed_time_seconds': time.monotonic() - self.test_start_time,
+            'statistics': self.rolling_stats.get_all_statistics(),
+        }
+
+        try:
+            with open(summary_path, 'w') as f:
+                json.dump(summary, f, indent=2)
+        except Exception as e:
+            logger.warning(f'Failed to write intermediate summary: {e}')
+
+    def _try_resume_from_checkpoint(self) -> bool:
+        """
+        Attempt to resume from checkpoint.
+
+        Returns:
+            True if resumed, False if starting fresh.
+        """
+        if not self.enable_resume:
+            return False
+
+        checkpoint = self.checkpoint_manager.load_checkpoint()
+        if checkpoint is None or checkpoint.completed:
+            return False
+
+        logger.info(f'Found checkpoint! Resuming from {checkpoint.total_requests_completed} completed requests.')
+
+        # Restore state
+        self.test_start_time = checkpoint.start_time
+        self.test_start_timestamp = checkpoint.start_timestamp
+        self.total_requests_completed = checkpoint.total_requests_completed
+        self.total_requests_started = checkpoint.total_requests_started
+        self.last_checkpoint_time = checkpoint.last_checkpoint_time
+
+        # Restore rolling statistics
+        from benchmarking.src.checkpoint_manager import RollingStatsCalculator
+        self.rolling_stats = RollingStatsCalculator.from_dict(checkpoint.rolling_stats_state)
+
+        return True
+
+    def send_requests_with_callback(
+        self,
+        request_config: RequestConfig,
+        completed_requests: List[LLMResponse],
+        progress: List[Any],
+        start_time: float,
+        total_duration_seconds: float,
+    ) -> None:
+        """
+        Send a single request with immediate write and rolling stats update.
+
+        This replaces the batch send_requests method for endurance testing.
+        """
+        if self.stop_event.is_set():
+            return
+
+        if time.monotonic() - start_time >= total_duration_seconds:
+            return
+
+        # Execute request
+        req_metrics, response_text, request_config = llm_request(request_config, self.tokenizer)
+
+        # Create response object
+        response_object = LLMResponse(
+            metrics=req_metrics,
+            response_text=response_text,
+            request_config=request_config,
+        )
+
+        # Immediately write to JSONL
+        self._write_response_to_jsonl(response_object)
+
+        # Update rolling statistics
+        self._update_rolling_stats(response_object)
+
+        # Add to buffer (bounded)
+        with self.buffer_lock:
+            self.response_buffer.append(response_object)
+            # Also add to completed_requests for compatibility
+            completed_requests.append(response_object)
+
+        # Update counters
+        self.total_requests_completed += 1
+        self.requests_since_checkpoint += 1
+
+        # Update progress bars
+        progress.append(1)
+        if self.cli_progress_bar:
+            self.cli_progress_bar.update(1)
+        if self.ui_progress_bar:
+            elapsed = time.monotonic() - start_time
+            self.ui_progress_bar(int(elapsed), int(total_duration_seconds))
+
+    def get_token_throughput_latencies(
+        self,
+        num_input_tokens: int,
+        num_output_tokens: int,
+        num_requests: int,  # Ignored for duration-based testing
+        sampling_params: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], List[LLMResponse]]:
+        """
+        Run duration-based endurance test with checkpointing.
+
+        Args:
+            num_input_tokens: Number of input tokens per request.
+            num_output_tokens: Number of output tokens per request.
+            num_requests: Ignored (duration-based testing).
+            sampling_params: Sampling parameters for generation.
+
+        Returns:
+            Tuple of (metadata, completed_requests).
+        """
+        # Check for resume
+        resumed = self._try_resume_from_checkpoint()
+
+        # Calculate test duration in seconds
+        total_duration_seconds = self.test_duration_hours * 3600
+
+        # Initialize timestamps if not resumed
+        if not resumed:
+            self.test_start_time = time.monotonic()
+            self.test_start_timestamp = datetime.now(timezone.utc).isoformat()
+            self.last_checkpoint_time = self.test_start_time
+
+        # Calculate remaining time if resumed
+        if resumed:
+            elapsed = time.monotonic() - self.test_start_time
+            remaining = total_duration_seconds - elapsed
+            if remaining <= 0:
+                logger.info('Test duration already elapsed. Completing...')
+                # Build final summary from checkpoint
+                return self._build_final_summary_from_checkpoint(num_input_tokens, num_output_tokens, sampling_params)
+            logger.info(f'Resuming test with {remaining/3600:.2f} hours remaining')
+
+        # Open JSONL file (append if resumed)
+        filename = self.create_output_filename(num_input_tokens, num_output_tokens)
+        mode = 'a' if resumed else 'w'
+        self._open_jsonl_file(filename, mode)
+
+        logger.info(f'Starting endurance test for {self.test_duration_hours} hours at {self.qps} QPS')
+        logger.info(f'Writing results to: {self.individual_responses_file_path}')
+
+        # Generate request configs on-demand (we'll create them as needed)
+        llm_responses: List[LLMResponse] = []
+        progress: List[Any] = []
+
+        # Use ThreadPoolExecutor for request submission
+        with ThreadPoolExecutor(max_workers=10000) as executor:
+            futures = []
+            request_idx = self.total_requests_started
+
+            while True:
+                current_time = time.monotonic()
+                elapsed = current_time - self.test_start_time
+
+                # Check if test duration has elapsed
+                if elapsed >= total_duration_seconds:
+                    logger.info('Test duration reached. Completing...')
+                    break
+
+                if self.stop_event.is_set():
+                    logger.info('Stop signal received. Terminating test.')
+                    break
+
+                # Build single request config
+                request_configs = self.build_request_configs(1, num_input_tokens, num_output_tokens, sampling_params)
+                if not request_configs:
+                    break
+
+                request_config = request_configs[0]
+                request_config.request_idx = request_idx
+
+                # Submit request
+                future = executor.submit(
+                    self.send_requests_with_callback,
+                    request_config,
+                    llm_responses,
+                    progress,
+                    self.test_start_time,
+                    total_duration_seconds,
+                )
+                futures.append(future)
+                for t in executor._threads:
+                    add_script_run_ctx(t)
+
+                self.total_requests_started += 1
+                request_idx += 1
+
+                # Check if checkpoint is needed
+                if self._should_checkpoint(current_time):
+                    current_timestamp = datetime.now(timezone.utc).isoformat()
+                    self._save_checkpoint(current_time, current_timestamp)
+
+                    # Clear buffer to free memory
+                    with self.buffer_lock:
+                        self.response_buffer.clear()
+
+                # Wait based on QPS distribution
+                wait_time = self._get_wait_time()
+                time.sleep(wait_time)
+
+            # Wait for all pending requests to complete
+            logger.info('Waiting for pending requests to complete...')
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(f'Error in request: {e}')
+
+        # Close JSONL file
+        if self.jsonl_file_handle:
+            self.jsonl_file_handle.close()
+            self.jsonl_file_handle = None
+
+        # Final checkpoint
+        end_time = time.monotonic()
+        end_timestamp = datetime.now(timezone.utc).isoformat()
+        self._save_checkpoint(end_time, end_timestamp)
+
+        logger.info(f'Endurance test completed! Total requests: {self.total_requests_completed}')
+
+        # Build final summary
+        return self._build_final_summary(
+            num_input_tokens,
+            num_output_tokens,
+            sampling_params,
+            llm_responses,
+            self.test_start_time,
+            end_time,
+        )
+
+    def _build_final_summary(
+        self,
+        num_input_tokens: int,
+        num_output_tokens: int,
+        sampling_params: Dict[str, Any],
+        llm_responses: List[LLMResponse],
+        start_time: float,
+        end_time: float,
+    ) -> Tuple[Dict[str, Any], List[LLMResponse]]:
+        """Build final summary from rolling statistics."""
+        # Get statistics from rolling calculator
+        all_stats = self.rolling_stats.get_all_statistics()
+
+        # Build results summary in expected format
+        results = {}
+        for metric_name, stats in all_stats.items():
+            results[metric_name] = stats
+
+        # Add overall metrics
+        elapsed = end_time - start_time
+        results[common_metrics.NUM_COMPLETED_REQUESTS] = self.total_requests_completed
+        results[common_metrics.COMPLETED_REQUESTS_PER_MIN] = round(self.total_requests_completed / elapsed * 60, 4)
+        results[common_metrics.NUM_REQ_STARTED] = self.total_requests_started
+
+        # Calculate error rate
+        # Note: We need to scan the JSONL file for errors since we don't keep all responses in memory
+        error_count = 0
+        if self.individual_responses_file_path and os.path.exists(self.individual_responses_file_path):
+            with open(self.individual_responses_file_path, 'r') as f:
+                for line in f:
+                    try:
+                        metrics = json.loads(line)
+                        if not pd.isnull(metrics.get(common_metrics.ERROR_CODE)):
+                            error_count += 1
+                    except:
+                        pass
+
+        results[common_metrics.NUM_ERRORS] = error_count
+        if self.total_requests_started > 0:
+            results[common_metrics.ERROR_RATE] = round(error_count / self.total_requests_started, 4)
+        else:
+            results[common_metrics.ERROR_RATE] = 0.0
+
+        # Construct metadata
+        metadata = {
+            'model': self.model_name,
+            'test_duration_hours': self.test_duration_hours,
+            'qps': self.qps,
+            'qps_distribution': self.qps_distribution,
+            'results': results,
+            'num_input_tokens': num_input_tokens,
+            'num_output_tokens': num_output_tokens,
+            'additional_sampling_params': sampling_params,
+            'start_timestamp': self.test_start_timestamp,
+            'end_timestamp': datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Mark checkpoint as completed and clean up
+        checkpoint_state = self.CheckpointState(
+            run_uuid=str(self.run_uuid),
+            start_time=self.test_start_time,
+            start_timestamp=self.test_start_timestamp,
+            last_checkpoint_time=end_time,
+            total_requests_completed=self.total_requests_completed,
+            total_requests_started=self.total_requests_started,
+            test_duration_hours=self.test_duration_hours,
+            qps=self.qps,
+            qps_distribution=self.qps_distribution,
+            num_input_tokens=num_input_tokens,
+            num_output_tokens=num_output_tokens,
+            model_name=self.model_name,
+            rolling_stats_state=self.rolling_stats.to_dict(),
+            completed=True,
+            end_time=end_time,
+            end_timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+        self.checkpoint_manager.save_checkpoint(checkpoint_state)
+
+        # Return empty list for llm_responses to avoid memory issues
+        # The actual responses are in the JSONL file
+        return metadata, []
+
+    def _build_final_summary_from_checkpoint(
+        self,
+        num_input_tokens: int,
+        num_output_tokens: int,
+        sampling_params: Dict[str, Any],
+    ) -> Tuple[Dict[str, Any], List[LLMResponse]]:
+        """Build final summary when test was already completed."""
+        checkpoint = self.checkpoint_manager.load_checkpoint()
+        if checkpoint is None:
+            raise Exception('No checkpoint found')
+
+        # Restore rolling stats
+        from benchmarking.src.checkpoint_manager import RollingStatsCalculator
+        self.rolling_stats = RollingStatsCalculator.from_dict(checkpoint.rolling_stats_state)
+
+        return self._build_final_summary(
+            num_input_tokens,
+            num_output_tokens,
+            sampling_params,
+            [],
+            checkpoint.start_time,
+            checkpoint.end_time or time.monotonic(),
+        )
+
+    def save_results(
+        self,
+        filename: str,
+        summary: Dict[str, Any],
+        individual_responses: List[LLMResponse],
+    ) -> None:
+        """
+        Save results for endurance test.
+
+        Individual responses are already written to JSONL, so we only save the summary.
+        """
+        summary_filename = f'{filename}_summary'
+
+        # Update metadata
+        summary.update(self.user_metadata)
+
+        results = LLMPerfResults(name=summary_filename, metadata=summary)
+        results_dir = Path(self.results_dir)
+        results_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save summary results
+        self.summary_file_path = f'{results_dir}/{summary_filename}.json'
+        with open(self.summary_file_path, 'w') as f:
+            json.dump(results.to_dict(), f, indent=4, default=str)
+
+        logger.info(f'Summary saved to: {self.summary_file_path}')
+        logger.info(f'Individual responses in: {self.individual_responses_file_path}')
+
+        # Clean up checkpoint files
+        self.checkpoint_manager.delete_checkpoint()

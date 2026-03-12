@@ -39,6 +39,7 @@ def str2bool(value: str) -> bool:
 def main() -> None:
     from benchmarking.src.performance_evaluation import (
         CustomPerformanceEvaluator,
+        EndurancePerformanceEvaluator,
         RealWorkLoadPerformanceEvaluator,
         SyntheticPerformanceEvaluator,
     )
@@ -323,8 +324,51 @@ def main() -> None:
             '--num-requests',
             type=int,
             default=10,
-            help="""The number of requests to make. Note that it is possible for the test 
+            help="""The number of requests to make. Note that it is possible for the test
                 to timeout first. (default: %(default)s)""",
+        )
+
+        # Endurance testing arguments
+        parser.add_argument(
+            '--enable-endurance-mode',
+            type=str2bool,
+            default=False,
+            help='Enable endurance testing mode for long-running tests (6-12+ hours). (default: %(default)s)',
+        )
+
+        parser.add_argument(
+            '--test-duration-hours',
+            type=float,
+            default=12.0,
+            help='Test duration in hours for endurance mode. (default: %(default)s)',
+        )
+
+        parser.add_argument(
+            '--checkpoint-interval-seconds',
+            type=int,
+            default=300,
+            help='Minimum seconds between checkpoints in endurance mode. (default: %(default)s)',
+        )
+
+        parser.add_argument(
+            '--checkpoint-interval-requests',
+            type=int,
+            default=1000,
+            help='Minimum requests between checkpoints in endurance mode. (default: %(default)s)',
+        )
+
+        parser.add_argument(
+            '--enable-resume',
+            type=str2bool,
+            default=True,
+            help='Auto-resume from checkpoint if found in endurance mode. (default: %(default)s)',
+        )
+
+        parser.add_argument(
+            '--checkpoint-dir',
+            type=str,
+            default=None,
+            help='Custom checkpoint directory (defaults to results-dir). (default: %(default)s)',
         )
 
         args = parser.parse_args()
@@ -333,21 +377,42 @@ def main() -> None:
         # running perf eval for multiple bundle models
         for model_idx, model_name in enumerate(model_names):
             user_metadata['model_idx'] = model_idx
-            # set real workload evaluator
-            real_workload_evaluator = RealWorkLoadPerformanceEvaluator(
-                multimodal_image_size=args.multimodal_image_size,
-                model_name=model_name,
-                results_dir=args.results_dir,
-                qps=args.qps,
-                qps_distribution=args.qps_distribution,
-                timeout=args.timeout,
-                user_metadata=user_metadata,
-                use_debugging_mode=args.use_debugging_mode,
-                llm_api=args.llm_api,
-            )
+
+            # Choose evaluator based on endurance mode flag
+            if args.enable_endurance_mode:
+                # Use endurance evaluator for long-running tests
+                evaluator = EndurancePerformanceEvaluator(
+                    multimodal_image_size=args.multimodal_image_size,
+                    model_name=model_name,
+                    results_dir=args.results_dir,
+                    qps=args.qps,
+                    qps_distribution=args.qps_distribution,
+                    timeout=args.timeout,
+                    user_metadata=user_metadata,
+                    use_debugging_mode=args.use_debugging_mode,
+                    llm_api=args.llm_api,
+                    test_duration_hours=args.test_duration_hours,
+                    checkpoint_interval_seconds=args.checkpoint_interval_seconds,
+                    checkpoint_interval_requests=args.checkpoint_interval_requests,
+                    enable_resume=args.enable_resume,
+                    checkpoint_dir=args.checkpoint_dir,
+                )
+            else:
+                # Use standard real workload evaluator
+                evaluator = RealWorkLoadPerformanceEvaluator(
+                    multimodal_image_size=args.multimodal_image_size,
+                    model_name=model_name,
+                    results_dir=args.results_dir,
+                    qps=args.qps,
+                    qps_distribution=args.qps_distribution,
+                    timeout=args.timeout,
+                    user_metadata=user_metadata,
+                    use_debugging_mode=args.use_debugging_mode,
+                    llm_api=args.llm_api,
+                )
 
             # Run performance evaluation
-            real_workload_evaluator.run_benchmark(
+            evaluator.run_benchmark(
                 num_input_tokens=args.num_input_tokens,
                 num_output_tokens=args.num_output_tokens,
                 num_requests=args.num_requests,
