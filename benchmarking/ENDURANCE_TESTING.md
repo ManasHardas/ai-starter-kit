@@ -23,11 +23,14 @@ cd benchmarking
   --qps 10 \
   --num-input-tokens 1000 \
   --num-output-tokens 1000 \
+  --model-name "DeepSeek-V3.1" \
   --enable-endurance-mode True \
   --test-duration-hours 12
 ```
 
 **Note:** On macOS, the script automatically uses `caffeinate` to prevent system sleep during endurance tests. This ensures your tests won't hang if your computer tries to sleep.
+
+**Tip:** The `--model-name` argument is optional. If not specified, it defaults to "DeepSeek-V3.1".
 
 ### Custom checkpoint intervals
 
@@ -319,6 +322,7 @@ with open('endurance_*_individual_responses.jsonl', 'r') as f:
 ```bash
 # Quick validation (5 minutes)
 ./run_multiple_real_workloads.sh \
+  --model-name "DeepSeek-V3.1" \
   --enable-endurance-mode True \
   --test-duration-hours 0.0833 \
   --checkpoint-interval-seconds 30 \
@@ -326,24 +330,28 @@ with open('endurance_*_individual_responses.jsonl', 'r') as f:
 
 # Short endurance (1 hour)
 ./run_multiple_real_workloads.sh \
+  --model-name "Meta-Llama-3.3-70B-Instruct" \
   --enable-endurance-mode True \
   --test-duration-hours 1 \
   --qps 10
 
 # Medium endurance (6 hours)
 ./run_multiple_real_workloads.sh \
+  --model-name "DeepSeek-V3.1" \
   --enable-endurance-mode True \
   --test-duration-hours 6 \
   --qps 10
 
 # Full endurance (12 hours)
 ./run_multiple_real_workloads.sh \
+  --model-name "DeepSeek-V3.1" \
   --enable-endurance-mode True \
   --test-duration-hours 12 \
   --qps 10
 
-# Extended stress test (24 hours)
+# Extended stress test (24 hours) - different model
 ./run_multiple_real_workloads.sh \
+  --model-name "Meta-Llama-3.1-405B" \
   --enable-endurance-mode True \
   --test-duration-hours 24 \
   --qps 50 \

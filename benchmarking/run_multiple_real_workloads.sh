@@ -2,11 +2,13 @@
 # run_multiple_real_workloads.sh
 # Usage examples:
 #   ./run_multiple_real_workloads.sh --qps [20,40] --num-input-tokens [500,1000] --num-output-tokens [500,1000]
-#   ./run_multiple_real_workloads.sh --qps 40,80 --num-input-tokens 1000 --num-output-tokens [100,500]
-#   ./run_multiple_real_workloads.sh --qps [20,40] --num-input-tokens [500,1000] --num-output-tokens [500,1000] --dry-run
+#   ./run_multiple_real_workloads.sh --qps 40,80 --model-name "Meta-Llama-3.3-70B-Instruct"
+#   ./run_multiple_real_workloads.sh --qps [20,40] --model-name "DeepSeek-V3.1" --dry-run
+#   ./run_multiple_real_workloads.sh --qps 10 --enable-endurance-mode True --test-duration-hours 12
 #
 # Notes:
 # - Accepts list values either as [a,b,c] or a,b,c or single scalar like 40
+# - Default model is DeepSeek-V3.1 (override with --model-name)
 # - Add --dry-run to just print the commands without executing
 # - Everything after a standalone `--` is passed through to evaluator.py verbatim
 
@@ -23,11 +25,7 @@ dry_run=0
 
 # Fixed args (edit if you need different defaults)
 MODE="real_workload"
-MODEL_NAME="MiniMax-M2.5"
-# Results dir: base path + model name + timestamp so files don't overwrite across runs
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-MODEL_SAFE="${MODEL_NAME//[^a-zA-Z0-9.-]/_}"
-RESULTS_DIR="./data/results/llmperf/${MODEL_SAFE}_${TIMESTAMP}"
+MODEL_NAME="DeepSeek-V3.1"  # Default, can be overridden with --model-name
 QPS_DISTRIBUTION="constant"
 TIMEOUT="600"
 MULTI_SIZE="na"
@@ -88,6 +86,11 @@ while [[ $# -gt 0 ]]; do
       dry_run=1
       shift
       ;;
+    --model-name)
+      [[ $# -ge 2 ]] || { echo "Error: --model-name needs a value"; exit 1; }
+      MODEL_NAME="$2"
+      shift 2
+      ;;
     --enable-endurance-mode)
       [[ $# -ge 2 ]] || { echo "Error: --enable-endurance-mode needs a value"; exit 1; }
       ENABLE_ENDURANCE_MODE="$2"
@@ -130,14 +133,32 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown option: $1"
-      echo "Try: --qps [20,40] --num-input-tokens [500,1000] --num-output-tokens [500,1000] [--dry-run] [-- ...extra flags]"
+      echo "Usage: $0 [options]"
+      echo "Options:"
+      echo "  --qps <value>                    QPS values as [a,b,c] or a,b,c or single value"
+      echo "  --num-input-tokens <value>       Input token counts"
+      echo "  --num-output-tokens <value>      Output token counts"
+      echo "  --model-name <name>              Model name (default: DeepSeek-V3.1)"
+      echo "  --enable-endurance-mode <bool>   Enable endurance testing (default: False)"
+      echo "  --test-duration-hours <hours>    Test duration in hours (default: 12.0)"
+      echo "  --prevent-sleep <bool>           Prevent system sleep on macOS (default: True)"
+      echo "  --dry-run                        Print commands without executing"
+      echo "  -- <extra args>                  Pass-through args to evaluator.py"
       exit 1
       ;;
   esac
 done
 
+# --- calculate derived values after arg parsing -------------------------
+
+# Results dir: base path + model name + timestamp so files don't overwrite across runs
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+MODEL_SAFE="${MODEL_NAME//[^a-zA-Z0-9.-]/_}"
+RESULTS_DIR="./data/results/llmperf/${MODEL_SAFE}_${TIMESTAMP}"
+
 # --- run all permutations --------------------------------------------------
 
+echo "model-name: $MODEL_NAME"
 echo "qps: ${qps_list[*]}"
 echo "num-input-tokens: ${num_in_list[*]}"
 echo "num-output-tokens: ${num_out_list[*]}"

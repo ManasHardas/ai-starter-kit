@@ -96,6 +96,16 @@ cd benchmarking
 ./test_sleep_prevention.sh
 ```
 
+**Test with custom model:**
+```bash
+./run_multiple_real_workloads.sh \
+  --qps 1 \
+  --model-name "Meta-Llama-3.3-70B-Instruct" \
+  --enable-endurance-mode True \
+  --test-duration-hours 0.0028 \
+  --dry-run
+```
+
 Expected output:
 ```
 ✓ Running on macOS
