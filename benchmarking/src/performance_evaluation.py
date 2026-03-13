@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -1879,10 +1880,19 @@ class EndurancePerformanceEvaluator(RealWorkLoadPerformanceEvaluator):
         llm_responses: List[LLMResponse] = []
         progress: List[Any] = []
 
-        # Use ThreadPoolExecutor for request submission
-        with ThreadPoolExecutor(max_workers=10000) as executor:
-            futures = []
+        # Calculate optimal max_workers based on QPS
+        # Rule of thumb: 2-3x QPS to handle network latency, capped at 2000
+        max_concurrent = min(int(self.qps * 3), 2000)
+        max_concurrent = max(max_concurrent, 100)  # Minimum 100 workers
+        logger.info(f'Using ThreadPoolExecutor with max_workers={max_concurrent} for QPS={self.qps}')
+
+        # Use ThreadPoolExecutor for request submission with bounded concurrency
+        with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+            # Use deque with maxlen to auto-cleanup completed futures and prevent unbounded memory growth
+            # Keep last 10000 futures for monitoring, auto-drops oldest
+            futures = deque(maxlen=10000)
             request_idx = self.total_requests_started
+            cleanup_counter = 0
 
             while True:
                 current_time = time.monotonic()
@@ -1921,6 +1931,23 @@ class EndurancePerformanceEvaluator(RealWorkLoadPerformanceEvaluator):
                 self.total_requests_started += 1
                 request_idx += 1
 
+                # Periodic cleanup of completed futures to free memory (every 1000 requests)
+                cleanup_counter += 1
+                if cleanup_counter >= 1000:
+                    # Remove completed futures from deque
+                    futures_to_keep = deque(maxlen=10000)
+                    for f in futures:
+                        if not f.done():
+                            futures_to_keep.append(f)
+                        else:
+                            # Check for exceptions in completed futures
+                            try:
+                                f.result()
+                            except Exception as e:
+                                logger.error(f'Error in completed request: {e}')
+                    futures = futures_to_keep
+                    cleanup_counter = 0
+
                 # Check if checkpoint is needed
                 if self._should_checkpoint(current_time):
                     current_timestamp = datetime.now(timezone.utc).isoformat()
@@ -1935,7 +1962,7 @@ class EndurancePerformanceEvaluator(RealWorkLoadPerformanceEvaluator):
                 time.sleep(wait_time)
 
             # Wait for all pending requests to complete
-            logger.info('Waiting for pending requests to complete...')
+            logger.info(f'Waiting for {len(futures)} pending requests to complete...')
             for future in as_completed(futures):
                 try:
                     future.result()

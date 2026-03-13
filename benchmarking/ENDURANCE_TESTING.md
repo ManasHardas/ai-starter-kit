@@ -225,7 +225,51 @@ For comparison, standard mode accumulates:
 | Checkpoint Size | ~1 MB |
 | Resume Time | <5 seconds |
 
+## High QPS Support
+
+The endurance evaluator automatically optimizes thread pool size based on QPS:
+
+| QPS | Thread Workers | Notes |
+|-----|---------------|-------|
+| 10 | 100 | Minimum worker count |
+| 100 | 300 | Low concurrency |
+| 600 | 1,800 | High concurrency |
+| 1200 | 2,000 | Maximum (capped) |
+
+**Memory Management:**
+- Uses bounded deque (max 10,000 futures)
+- Periodic cleanup every 1,000 requests
+- Prevents unbounded memory growth
+
+**For QPS > 1200:** Consider distributed testing across multiple machines.
+
 ## Troubleshooting
+
+### "RuntimeError: can't start new thread" at High QPS
+
+**Problem:** Test crashes with thread error after ~250K requests at high QPS (600+).
+
+**Cause:** System thread limit reached.
+
+**Solution:** This is now fixed automatically with dynamic thread pool sizing. If you still encounter this:
+
+```bash
+# Check system thread limit
+ulimit -u
+
+# Increase if needed (macOS/Linux)
+ulimit -u 4096
+
+# Monitor thread count during test
+watch -n 5 'ps -M $(pgrep -f evaluator.py) | wc -l'
+```
+
+**Expected thread counts:**
+- 600 QPS: ~1,800 threads
+- 1200 QPS: ~2,000 threads
+- Should remain stable throughout test
+
+See `HIGH_QPS_FIX.md` for detailed explanation.
 
 ### macOS System Sleep Issues
 

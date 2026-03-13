@@ -32,6 +32,20 @@ MULTI_SIZE="na"
 DEBUG_MODE="False"
 LLM_API="sncloud"
 
+# Python interpreter - auto-detect virtual environment or use system python
+if [[ -x "../py3.12/bin/python" ]]; then
+    PYTHON="../py3.12/bin/python"
+elif [[ -x "./py3.12/bin/python" ]]; then
+    PYTHON="./py3.12/bin/python"
+elif command -v python3 &> /dev/null; then
+    PYTHON="python3"
+elif command -v python &> /dev/null; then
+    PYTHON="python"
+else
+    echo "ERROR: No python interpreter found. Please install python or activate a virtual environment." >&2
+    exit 1
+fi
+
 # Endurance testing parameters (defaults)
 ENABLE_ENDURANCE_MODE="False"
 TEST_DURATION_HOURS="12.0"
@@ -91,6 +105,11 @@ while [[ $# -gt 0 ]]; do
       MODEL_NAME="$2"
       shift 2
       ;;
+    --python)
+      [[ $# -ge 2 ]] || { echo "Error: --python needs a value"; exit 1; }
+      PYTHON="$2"
+      shift 2
+      ;;
     --enable-endurance-mode)
       [[ $# -ge 2 ]] || { echo "Error: --enable-endurance-mode needs a value"; exit 1; }
       ENABLE_ENDURANCE_MODE="$2"
@@ -139,6 +158,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --num-input-tokens <value>       Input token counts"
       echo "  --num-output-tokens <value>      Output token counts"
       echo "  --model-name <name>              Model name (default: DeepSeek-V3.1)"
+      echo "  --python <path>                  Python interpreter path (auto-detected by default)"
       echo "  --enable-endurance-mode <bool>   Enable endurance testing (default: False)"
       echo "  --test-duration-hours <hours>    Test duration in hours (default: 12.0)"
       echo "  --prevent-sleep <bool>           Prevent system sleep on macOS (default: True)"
@@ -158,6 +178,7 @@ RESULTS_DIR="./data/results/llmperf/${MODEL_SAFE}_${TIMESTAMP}"
 
 # --- run all permutations --------------------------------------------------
 
+echo "python: $PYTHON (version: $($PYTHON --version 2>&1))"
 echo "model-name: $MODEL_NAME"
 echo "qps: ${qps_list[*]}"
 echo "num-input-tokens: ${num_in_list[*]}"
@@ -174,7 +195,7 @@ for qps in "${qps_list[@]}"; do
     for nout in "${num_out_list[@]}"; do
       echo "==> Running combo: qps=$qps, num_requests=$num_requests, num_input_tokens=$nin, num_output_tokens=$nout"
 
-      cmd=(python src/evaluator.py
+      cmd=("$PYTHON" src/evaluator.py
         --mode "$MODE"
         --model-name "$MODEL_NAME"
         --results-dir "$RESULTS_DIR"
