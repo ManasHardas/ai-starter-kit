@@ -1752,6 +1752,7 @@ class EndurancePerformanceEvaluator(RealWorkLoadPerformanceEvaluator):
         Send a single request with immediate write and rolling stats update.
 
         This replaces the batch send_requests method for endurance testing.
+        Includes retry logic for network errors (e.g., after system sleep).
         """
         if self.stop_event.is_set():
             return
@@ -1759,8 +1760,40 @@ class EndurancePerformanceEvaluator(RealWorkLoadPerformanceEvaluator):
         if time.monotonic() - start_time >= total_duration_seconds:
             return
 
-        # Execute request
-        req_metrics, response_text, request_config = llm_request(request_config, self.tokenizer)
+        # Execute request with retry logic for network errors
+        max_retries = 3
+        retry_delay = 1.0  # Start with 1 second
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                req_metrics, response_text, request_config = llm_request(request_config, self.tokenizer)
+                break  # Success, exit retry loop
+            except Exception as e:
+                last_error = e
+                error_msg = str(e).lower()
+                # Check if error is network-related (connection, timeout, etc.)
+                is_network_error = any(
+                    keyword in error_msg
+                    for keyword in ['connection', 'timeout', 'network', 'unreachable', 'reset', 'refused']
+                )
+
+                if is_network_error and attempt < max_retries - 1:
+                    logger.warning(
+                        f'Network error on attempt {attempt + 1}/{max_retries} for request {request_config.request_idx}: {e}. '
+                        f'Retrying in {retry_delay}s...'
+                    )
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    # Non-network error or max retries reached
+                    if attempt == max_retries - 1:
+                        logger.error(
+                            f'Request {request_config.request_idx} failed after {max_retries} attempts: {last_error}'
+                        )
+                    # Let the error propagate to be recorded in metrics
+                    req_metrics, response_text, request_config = llm_request(request_config, self.tokenizer)
+                    break
 
         # Create response object
         response_object = LLMResponse(

@@ -23,7 +23,7 @@ dry_run=0
 
 # Fixed args (edit if you need different defaults)
 MODE="real_workload"
-MODEL_NAME="DeepSeek-V3.1"
+MODEL_NAME="MiniMax-M2.5"
 # Results dir: base path + model name + timestamp so files don't overwrite across runs
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 MODEL_SAFE="${MODEL_NAME//[^a-zA-Z0-9.-]/_}"
@@ -41,6 +41,7 @@ CHECKPOINT_INTERVAL_SECONDS="300"
 CHECKPOINT_INTERVAL_REQUESTS="1000"
 ENABLE_RESUME="True"
 CHECKPOINT_DIR=""
+PREVENT_SLEEP="True"  # Use caffeinate on macOS to prevent system sleep
 
 EXTRA_ARGS=()
 
@@ -117,6 +118,11 @@ while [[ $# -gt 0 ]]; do
       CHECKPOINT_DIR="$2"
       shift 2
       ;;
+    --prevent-sleep)
+      [[ $# -ge 2 ]] || { echo "Error: --prevent-sleep needs a value"; exit 1; }
+      PREVENT_SLEEP="$2"
+      shift 2
+      ;;
     --) # pass-through to evaluator.py
       shift
       EXTRA_ARGS+=("$@")
@@ -175,6 +181,18 @@ for qps in "${qps_list[@]}"; do
       # pass-through extras last (if any)
       if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
         cmd+=("${EXTRA_ARGS[@]}")
+      fi
+
+      # Wrap with caffeinate on macOS to prevent sleep during endurance tests
+      if [[ "$ENABLE_ENDURANCE_MODE" == "True" ]] && [[ "$PREVENT_SLEEP" == "True" ]]; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+          if command -v caffeinate &> /dev/null; then
+            echo "==> Using caffeinate to prevent system sleep during endurance test"
+            cmd=(caffeinate -i "${cmd[@]}")
+          else
+            echo "WARNING: caffeinate not found. System may sleep during long tests!" >&2
+          fi
+        fi
       fi
 
       echo "+ ${cmd[*]}"

@@ -27,6 +27,8 @@ cd benchmarking
   --test-duration-hours 12
 ```
 
+**Note:** On macOS, the script automatically uses `caffeinate` to prevent system sleep during endurance tests. This ensures your tests won't hang if your computer tries to sleep.
+
 ### Custom checkpoint intervals
 
 ```bash
@@ -76,6 +78,7 @@ python src/evaluator.py \
 | `--checkpoint-interval-requests` | int | 1000 | Minimum requests between checkpoints |
 | `--enable-resume` | bool | True | Auto-resume from checkpoint if found |
 | `--checkpoint-dir` | str | None | Custom checkpoint directory (defaults to results-dir) |
+| `--prevent-sleep` | bool | True | Use caffeinate on macOS to prevent system sleep (bash script only) |
 
 ### Standard Real Workload Arguments
 
@@ -221,6 +224,36 @@ For comparison, standard mode accumulates:
 
 ## Troubleshooting
 
+### macOS System Sleep Issues
+
+**Problem:** Test hangs or fails when Mac goes to sleep during long tests.
+
+**Solution:** The script automatically prevents sleep on macOS using `caffeinate` when endurance mode is enabled.
+
+**Manual verification:**
+```bash
+# Check if caffeinate is available
+which caffeinate
+# Should output: /usr/bin/caffeinate
+
+# Manually run with caffeinate
+caffeinate -i python src/evaluator.py --enable-endurance-mode True ...
+```
+
+**Disable sleep prevention** (not recommended):
+```bash
+./run_multiple_real_workloads.sh \
+  --enable-endurance-mode True \
+  --prevent-sleep False  # Disables caffeinate
+```
+
+**Additional protection:**
+1. Go to System Settings → Lock Screen → Turn display off when inactive: Never
+2. Go to System Settings → Battery → Prevent automatic sleeping when display is off: On
+3. Keep Mac plugged into power
+
+**Network retry logic:** The endurance evaluator automatically retries network requests up to 3 times with exponential backoff (1s, 2s, 4s) to handle transient network issues after wake.
+
 ### Test not resuming from checkpoint
 
 Check that:
@@ -356,3 +389,21 @@ Prevents corruption from concurrent writes:
 - Uses `filelock` library
 - Timeout: 10 seconds
 - Lock file: `checkpoint_{uuid}.lock`
+
+### Network Error Handling
+
+Automatically retries requests on network failures:
+- Max retries: 3 attempts
+- Exponential backoff: 1s, 2s, 4s
+- Detects: connection errors, timeouts, network unreachable, connection reset
+- Critical for recovering from system sleep/wake cycles
+- Failed requests are logged and recorded in error metrics
+
+### System Sleep Prevention (macOS)
+
+Uses `caffeinate` to prevent system sleep:
+- Command: `caffeinate -i` (prevents idle sleep)
+- Enabled by default for endurance tests
+- Automatically detects macOS
+- Falls back gracefully if caffeinate not available
+- Can be disabled with `--prevent-sleep False`
