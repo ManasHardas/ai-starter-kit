@@ -191,14 +191,41 @@ class PoissonLoadAggregator:
             f"{len(self.user_responses)} users"
         )
 
-        # Extract test timeframe
+        # Extract test timeframe from response timestamps
         if self.all_responses:
-            timestamps = [
-                r.get('client_start_timestamp', 0)
-                for r in self.all_responses
-            ]
-            self.test_start_time = min(timestamps)
-            self.test_end_time = max(timestamps)
+            from datetime import datetime, date
+
+            # Parse time strings like "10:45:44.850289" into timestamps
+            start_times = []
+            end_times = []
+
+            for r in self.all_responses:
+                start_str = r.get('start_time')
+                end_str = r.get('end_time')
+
+                if start_str:
+                    try:
+                        # Parse time string and combine with today's date
+                        time_obj = datetime.strptime(start_str, '%H:%M:%S.%f').time()
+                        dt = datetime.combine(date.today(), time_obj)
+                        start_times.append(dt.timestamp())
+                    except:
+                        pass
+
+                if end_str:
+                    try:
+                        time_obj = datetime.strptime(end_str, '%H:%M:%S.%f').time()
+                        dt = datetime.combine(date.today(), time_obj)
+                        end_times.append(dt.timestamp())
+                    except:
+                        pass
+
+            if start_times and end_times:
+                self.test_start_time = min(start_times)
+                self.test_end_time = max(end_times)
+            else:
+                self.test_start_time = 0
+                self.test_end_time = 0
 
     def load_config(self) -> Optional[Dict[str, Any]]:
         """Load the Poisson load configuration if available."""
@@ -446,11 +473,40 @@ class PoissonLoadAggregator:
             if not responses:
                 continue
 
-            # Extract timestamps
-            timestamps = [r.get('client_start_timestamp', 0) for r in responses]
-            session_start = min(timestamps)
-            session_end = max(timestamps)
-            session_duration = session_end - session_start
+            # Extract timestamps from start_time and end_time strings
+            from datetime import datetime, date
+
+            start_times = []
+            end_times = []
+
+            for r in responses:
+                start_str = r.get('start_time')
+                end_str = r.get('end_time')
+
+                if start_str:
+                    try:
+                        time_obj = datetime.strptime(start_str, '%H:%M:%S.%f').time()
+                        dt = datetime.combine(date.today(), time_obj)
+                        start_times.append(dt.timestamp())
+                    except:
+                        pass
+
+                if end_str:
+                    try:
+                        time_obj = datetime.strptime(end_str, '%H:%M:%S.%f').time()
+                        dt = datetime.combine(date.today(), time_obj)
+                        end_times.append(dt.timestamp())
+                    except:
+                        pass
+
+            if start_times and end_times:
+                session_start = min(start_times)
+                session_end = max(end_times)
+                session_duration = session_end - session_start
+            else:
+                session_start = 0
+                session_end = 0
+                session_duration = 0
 
             # Calculate QPS
             avg_qps = len(responses) / session_duration if session_duration > 0 else 0.0

@@ -8,6 +8,7 @@ This module implements variable, realistic server load using Poisson processes w
 - System sees continuous, variable load (production-like)
 """
 
+import gc
 import json
 import logging
 import multiprocessing
@@ -488,6 +489,23 @@ class PoissonLoadGenerator:
             user_process.terminate()
             user_process.join(timeout=5)
 
+        # Clean up multiprocessing objects to prevent semaphore leaks
+        # Need to explicitly unlink shared memory objects
+        try:
+            # Get references before deleting
+            qps_obj = user_process.qps
+            event_obj = user_process.stop_event
+
+            # Delete attributes from process
+            del user_process.qps
+            del user_process.stop_event
+
+            # Force garbage collection of the objects
+            del qps_obj
+            del event_obj
+        except Exception as e:
+            logger.debug(f"Cleanup warning for {user_id}: {e}")
+
         # Close the process object to release resources properly
         user_process.close()
 
@@ -582,6 +600,23 @@ class PoissonLoadGenerator:
             # Don't restart - this is realistic (users disconnect)
             # Clean up process resources
             user_process = self.active_users[user_id]['process']
+
+            # Clean up multiprocessing objects to prevent semaphore leaks
+            try:
+                # Get references before deleting
+                qps_obj = user_process.qps
+                event_obj = user_process.stop_event
+
+                # Delete attributes from process
+                del user_process.qps
+                del user_process.stop_event
+
+                # Force garbage collection of the objects
+                del qps_obj
+                del event_obj
+            except Exception as e:
+                logger.debug(f"Cleanup warning for {user_id}: {e}")
+
             user_process.close()
             del self.active_users[user_id]
 
@@ -740,6 +775,13 @@ class PoissonLoadGenerator:
         logger.info("Test duration complete. Cleaning up all users...")
         for user_id in list(self.active_users.keys()):
             self.kill_user(user_id)
+
+        # Force garbage collection to clean up semaphores
+        # Multiple passes with all generations to ensure all finalizers run
+        time.sleep(0.2)  # Brief pause for OS cleanup
+        for _ in range(3):
+            gc.collect(2)  # Collect all generations
+        time.sleep(0.1)
 
         logger.info("Poisson load generation complete!")
 
