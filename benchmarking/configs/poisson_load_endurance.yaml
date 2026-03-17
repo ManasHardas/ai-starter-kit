@@ -2,15 +2,15 @@
 # Simulates realistic production load over 12+ hours
 
 # Test configuration
-test_duration_hours: 12.0
+test_duration_hours: 6.0
 results_dir: "./data/results/llmperf/poisson_load_endurance"
 
 # User arrival pattern - Moderate, sustained load
 user_count:
   type: "poisson"
-  lambda_users: 8.0  # Average 8 concurrent users
+  lambda_users: 20.0  # Average 8 concurrent users
   min_users: 2
-  max_users: 20
+  max_users: 38
   resample_interval_seconds: 90  # Slower resampling for stability
 
 # Per-user request rate - Moderate QPS

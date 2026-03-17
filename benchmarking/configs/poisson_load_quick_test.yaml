@@ -3,7 +3,7 @@
 
 load_config:
   # Test duration
-  test_duration_hours: 0.0833  # 5 minutes
+  test_duration_hours: 0.0333  # 2 minutes
 
   # Results directory
   results_dir: "./data/results/llmperf/poisson_load_quick_test"

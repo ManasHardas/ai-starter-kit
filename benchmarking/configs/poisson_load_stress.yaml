@@ -8,9 +8,9 @@ results_dir: "./data/results/llmperf/poisson_load_stress"
 # User arrival pattern - Higher concurrency
 user_count:
   type: "poisson"
-  lambda_users: 15.0  # Average 15 concurrent users
+  lambda_users: 50.0  # Average 15 concurrent users
   min_users: 5
-  max_users: 30
+  max_users: 95
   resample_interval_seconds: 60
 
 # Per-user request rate - Higher QPS
