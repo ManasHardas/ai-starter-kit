@@ -488,6 +488,9 @@ class PoissonLoadGenerator:
             user_process.terminate()
             user_process.join(timeout=5)
 
+        # Close the process object to release resources properly
+        user_process.close()
+
         # Remove from tracking
         age = time.time() - user_info['spawn_time']
         del self.active_users[user_id]
@@ -577,6 +580,9 @@ class PoissonLoadGenerator:
 
         for user_id in dead_users:
             # Don't restart - this is realistic (users disconnect)
+            # Clean up process resources
+            user_process = self.active_users[user_id]['process']
+            user_process.close()
             del self.active_users[user_id]
 
     def log_system_state(self):
