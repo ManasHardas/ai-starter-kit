@@ -15,6 +15,10 @@ sys.path.append('./src/llmperf')
 
 import warnings
 
+# Disable SSL warnings for self-signed certificates
+from urllib3.exceptions import InsecureRequestWarning
+warnings.filterwarnings('ignore', category=InsecureRequestWarning)
+
 from dotenv import load_dotenv
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
@@ -328,7 +332,7 @@ class SambaNovaCloudAPI(BaseAPIEndpoint):
         metrics[common_metrics.REQ_START_TIME] = datetime.now().strftime('%H:%M:%S.%f')
         start_time = event_start_time = time.monotonic()
 
-        with requests.post(url, headers=headers, json=json_data, stream=self.request_config.is_stream_mode) as response:
+        with requests.post(url, headers=headers, json=json_data, stream=self.request_config.is_stream_mode, verify=False) as response:
             if response.status_code != 200:
                 response.raise_for_status()
             client = sseclient.SSEClient(response) # type: ignore[arg-type]
