@@ -278,15 +278,15 @@ class PoissonLoadAggregator:
         ]
 
         output_throughput_values = [
-            r.get('output_throughput_token_per_s', 0)
+            r.get('client_output_token_per_s_per_request', 0)
             for r in self.all_responses
-            if r.get('output_throughput_token_per_s') is not None
+            if r.get('client_output_token_per_s_per_request') is not None
         ]
 
         total_throughput_values = [
-            r.get('total_throughput_token_per_s', 0)
+            r.get('client_total_tokens_per_s_per_request', 0)
             for r in self.all_responses
-            if r.get('total_throughput_token_per_s') is not None
+            if r.get('client_total_tokens_per_s_per_request') is not None
         ]
 
         # Count errors
@@ -391,13 +391,13 @@ class PoissonLoadAggregator:
             ]
 
             output_throughput = [
-                r.get('output_throughput_token_per_s', 0) for r in bucket_responses
-                if r.get('output_throughput_token_per_s') is not None
+                r.get('client_output_token_per_s_per_request', 0) for r in bucket_responses
+                if r.get('client_output_token_per_s_per_request') is not None
             ]
 
             total_throughput = [
-                r.get('total_throughput_token_per_s', 0) for r in bucket_responses
-                if r.get('total_throughput_token_per_s') is not None
+                r.get('client_total_tokens_per_s_per_request', 0) for r in bucket_responses
+                if r.get('client_total_tokens_per_s_per_request') is not None
             ]
 
             error_count = sum(
@@ -467,8 +467,8 @@ class PoissonLoadAggregator:
             ]
 
             output_throughput = [
-                r.get('output_throughput_token_per_s', 0) for r in responses
-                if r.get('output_throughput_token_per_s') is not None
+                r.get('client_output_token_per_s_per_request', 0) for r in responses
+                if r.get('client_output_token_per_s_per_request') is not None
             ]
 
             error_count = sum(
