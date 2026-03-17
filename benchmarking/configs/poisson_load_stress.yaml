@@ -1,0 +1,70 @@
+# Stress Test Poisson Load Configuration
+# Simulates high load with 10-20 concurrent users and variable QPS
+
+# Test configuration
+test_duration_hours: 2.0
+results_dir: "./data/results/llmperf/poisson_load_stress"
+
+# User arrival pattern - Higher concurrency
+user_count:
+  type: "poisson"
+  lambda_users: 15.0  # Average 15 concurrent users
+  min_users: 5
+  max_users: 30
+  resample_interval_seconds: 60
+
+# Per-user request rate - Higher QPS
+user_qps:
+  type: "poisson"
+  lambda_qps: 8.0  # Average 8 QPS per user (~120 total QPS)
+  min_qps: 2.0
+  max_qps: 15.0
+  resample_interval_seconds: 30
+
+# User session duration - Shorter sessions for more churn
+session_duration:
+  type: "exponential"
+  mean_duration_seconds: 180  # Average 3 minute sessions
+  min_duration_seconds: 30
+  max_duration_seconds: 600  # Max 10 minutes
+
+# Request configuration
+request:
+  num_input_tokens: 2000
+  num_output_tokens: 1000
+  multimodal_image_size: "na"
+
+  models:
+    # - "DeepSeek-V3.1"
+    - "MiniMax-M2.5"
+
+
+  input_token_variation: 0.3  # ±30% variation
+  output_token_variation: 0.3
+
+# API configuration
+api:
+  llm_api: "sncloud"
+  timeout: 600
+  max_retries: 3
+
+# Monitoring
+monitoring:
+  checkpoint_interval_seconds: 120  # More frequent checkpoints
+  checkpoint_interval_requests: 1000
+  state_log_interval_seconds: 20
+  enable_resume: true
+
+# Load spike injection - Test system under extreme load
+load_spikes:
+  enabled: true
+  spikes:
+    # Spike at 30 minutes - 3x load for 5 minutes
+    - time_offset_seconds: 1800
+      spike_multiplier: 3.0
+      duration_seconds: 300
+
+    # Spike at 1 hour - 2x load for 10 minutes
+    - time_offset_seconds: 3600
+      spike_multiplier: 2.0
+      duration_seconds: 600

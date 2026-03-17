@@ -1558,6 +1558,9 @@ class EndurancePerformanceEvaluator(RealWorkLoadPerformanceEvaluator):
             enable_resume: Whether to auto-resume from checkpoint if found.
             checkpoint_dir: Custom checkpoint directory (defaults to results_dir).
         """
+        # Extract user_name if provided (for Poisson load generator)
+        self.user_name = kwargs.pop('user_name', None)
+
         super().__init__(*args, **kwargs)
 
         # Import checkpoint infrastructure
@@ -1605,8 +1608,11 @@ class EndurancePerformanceEvaluator(RealWorkLoadPerformanceEvaluator):
         multimodal_suffix = f'_multimodal_{self.multimodal_image_size}' if self.multimodal_image_size != 'na' else ''
         model_name = self.model_name.replace('_', '-')
 
+        # Include user_name if provided (for Poisson load generation)
+        user_prefix = f'{self.user_name}_' if self.user_name else ''
+
         output_file_name = (
-            f'endurance_{self.user_metadata["model_idx"]}_{model_name}{multimodal_suffix}_{num_input_tokens}'
+            f'endurance_{user_prefix}{self.user_metadata["model_idx"]}_{model_name}{multimodal_suffix}_{num_input_tokens}'
             f'_{num_output_tokens}_{self.qps}_{self.qps_distribution}_{self.test_duration_hours}h_{generation_mode}_{self.run_uuid}'
         )
 
@@ -1627,7 +1633,12 @@ class EndurancePerformanceEvaluator(RealWorkLoadPerformanceEvaluator):
             return
 
         with self.jsonl_lock:
-            json.dump(response.metrics, self.jsonl_file_handle)
+            # Add user_name to metrics if provided (for Poisson load generation)
+            metrics_to_write = response.metrics.copy()
+            if self.user_name:
+                metrics_to_write['user_name'] = self.user_name
+
+            json.dump(metrics_to_write, self.jsonl_file_handle)
             self.jsonl_file_handle.write('\n')
             self.jsonl_file_handle.flush()
 

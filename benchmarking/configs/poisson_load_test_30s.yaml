@@ -1,0 +1,81 @@
+# Test Poisson Load Configuration - 30 seconds
+# For testing aggregation functionality
+
+load_config:
+  # Test duration
+  test_duration_hours: 0.00833  # 30 seconds
+
+  # Results directory
+  results_dir: "./data/results/llmperf/poisson_load_test_30s"
+
+  # Checkpointing
+  checkpoint_interval_seconds: 10
+  checkpoint_interval_requests: 50
+  enable_resume: true
+
+  # User arrival pattern (Poisson distribution)
+  user_concurrency:
+    lambda_users: 2.0  # Average 2 concurrent users
+    distribution: "poisson"
+    min_users: 1
+    max_users: 4
+    time_pattern:
+      enabled: false
+
+  # Per-user request rate (Poisson distribution)
+  user_request_rate:
+    lambda_qps: 1.0  # Average 1 QPS per user
+    distribution: "poisson"
+    min_qps: 0.5
+    max_qps: 2.0
+
+  # User session duration (Exponential distribution)
+  user_session:
+    duration_distribution: "exponential"
+    mean_duration_seconds: 15  # Average 15 second sessions
+    min_duration_seconds: 10
+    max_duration_seconds: 25
+
+  # Resampling intervals
+  resampling:
+    user_count_interval_seconds: 10
+    user_qps_interval_seconds: 5
+
+  # Request configuration
+  request_params:
+    num_input_tokens:
+      distribution: "normal"
+      mean: 500
+      std: 50
+      min: 400
+      max: 600
+
+    num_output_tokens:
+      distribution: "normal"
+      mean: 250
+      std: 25
+      min: 200
+      max: 300
+
+    multimodal_image_size: "na"
+
+    model_distribution:
+      - model: "MiniMax-M2.5"
+        probability: 1.0
+
+  # Load spikes - Disabled
+  load_spikes:
+    enabled: false
+
+  # System limits
+  limits:
+    max_concurrent_users: 10
+    max_total_qps: 100
+
+  # LLM API settings
+  llm_api: "sncloud"
+  timeout: 300
+  use_debugging_mode: false
+
+  # Monitoring
+  state_log_interval_seconds: 5

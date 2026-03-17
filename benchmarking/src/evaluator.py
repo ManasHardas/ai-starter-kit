@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import sys
+import yaml
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 kit_dir = os.path.abspath(os.path.join(current_dir, '..'))
@@ -43,6 +44,7 @@ def main() -> None:
         RealWorkLoadPerformanceEvaluator,
         SyntheticPerformanceEvaluator,
     )
+    from benchmarking.src.poisson_load_generator import PoissonLoadGenerator
 
     parser = argparse.ArgumentParser(
         description="""Run a token throughput and latency benchmark. You have the option of running in two different 
@@ -58,24 +60,33 @@ def main() -> None:
     # Distinguish between custom and synthetic dataset runs
     parser.add_argument(
         '--mode',
-        choices=['custom', 'synthetic', 'real_workload'],
+        choices=['custom', 'synthetic', 'real_workload', 'poisson_load'],
         required=True,
-        help="""Run mode for the performance evaluation. You have three options to choose from - 'custom', 'synthetic'\
-            or 'real workload'.
-            
-            Custom: You provide your own dataset via the `input-file-path argument. We will run the performance 
+        help="""Run mode for the performance evaluation. You have four options to choose from - 'custom', 'synthetic',\
+            'real_workload', or 'poisson_load'.
+
+            Custom: You provide your own dataset via the `input-file-path argument. We will run the performance
                     evaluation with the provided dataset.
-                
-            Synthetic: You provide the number of input tokens, number of output tokens, and number of requests. We 
+
+            Synthetic: You provide the number of input tokens, number of output tokens, and number of requests. We
                     will generate n input prompts for you where n is the number of requests specified.
-            
+
             Real Workload: You provide the queries per second (QPS), QPS distribution, number of requests, number of
                     input and output tokens. We will generate requests randomly according to the distribution specified
-                    and rest of parameters.""",
+                    and rest of parameters.
+
+            Poisson Load: You provide a configuration file specifying Poisson-based variable load parameters. The system
+                    will simulate multiple users with variable QPS, creating realistic production-like traffic patterns.""",
     )
 
-    # Required Common Argurments
-    parser.add_argument('--results-dir', type=str, required=True, help='The output directory to save the results to.')
+    # Required Common Arguments (results-dir optional for poisson_load mode as it's in config)
+    parser.add_argument(
+        '--results-dir',
+        type=str,
+        required=False,
+        default=None,
+        help='The output directory to save the results to. (Required for all modes except poisson_load where it can be specified in config)',
+    )
 
     parser.add_argument(
         '--llm-api',
@@ -133,6 +144,10 @@ def main() -> None:
 
     # Custom dataset evaluation path
     if args.mode == 'custom':
+        # Validate required arguments for this mode
+        if not args.results_dir:
+            parser.error('--results-dir is required for custom mode')
+
         # Custom dataset specific arguments
         parser.add_argument(
             '--num-concurrent-requests',
@@ -182,6 +197,10 @@ def main() -> None:
 
     # Synthetic dataset evaluation path
     elif args.mode == 'synthetic':
+        # Validate required arguments for this mode
+        if not args.results_dir:
+            parser.error('--results-dir is required for synthetic mode')
+
         # Synthetic dataset specific arguments
         parser.add_argument(
             '--num-concurrent-requests',
@@ -276,6 +295,10 @@ def main() -> None:
 
     # Real workload evaluation path
     elif args.mode == 'real_workload':
+        # Validate required arguments for this mode
+        if not args.results_dir:
+            parser.error('--results-dir is required for real_workload mode')
+
         parser.add_argument(
             '--qps',
             type=float,
@@ -419,8 +442,49 @@ def main() -> None:
                 sampling_params=json.loads(args.sampling_params),
             )
 
+    # Poisson load evaluation path
+    elif args.mode == 'poisson_load':
+        parser.add_argument(
+            '--config',
+            type=str,
+            required=True,
+            help='Path to YAML configuration file for Poisson load testing.',
+        )
+
+        parser.add_argument(
+            '--target-qps',
+            type=float,
+            default=None,
+            help='Target total QPS (optional). If specified, generates a simplified config from this value.',
+        )
+
+        args = parser.parse_args()
+
+        # Create and run Poisson load generator
+        if args.target_qps:
+            # Generate simplified config from target QPS
+            import yaml
+            with open(args.config, 'r') as f:
+                base_config = yaml.safe_load(f)
+
+            test_duration = base_config.get('test_duration_hours', 1.0)
+            results_dir = base_config.get('results_dir', './data/results/llmperf/poisson_load')
+
+            config_dict = PoissonLoadGenerator.create_simple_config(
+                target_avg_qps=args.target_qps,
+                test_duration_hours=test_duration,
+                results_dir=results_dir,
+            )
+            generator = PoissonLoadGenerator(config_dict=config_dict)
+        else:
+            # Use config file directly
+            generator = PoissonLoadGenerator(config_file=args.config)
+
+        # Run load generation
+        generator.run_load_generation()
+
     else:
-        raise Exception("Performance eval mode not valid. Available values are 'custom', 'synthetic', 'real_workload'")
+        raise Exception("Performance eval mode not valid. Available values are 'custom', 'synthetic', 'real_workload', 'poisson_load'")
 
 
 if __name__ == '__main__':
